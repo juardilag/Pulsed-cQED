@@ -42,6 +42,19 @@ def qubit_ops() -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     
     return sigma_m, sigma_p, sigma_ee
 
+
+def projector(psi : jnp.ndarray) -> jnp.ndarray:
+    """
+    Creates a projector operator for a given state vector.
+
+    Args:
+        psi (jnp.ndarray): A state vector
+    Returns:
+        jnp.ndarray: The projector operator |psi><psi|
+    """
+    return jnp.outer(psi, jnp.conj(psi))
+    
+    
 def static_hamiltonian(
     dim_cavity : int, 
     omega_c : float, 
