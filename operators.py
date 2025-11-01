@@ -48,6 +48,15 @@ def projector(psi : jnp.ndarray) -> jnp.ndarray:
     """
     return jnp.outer(psi, jnp.conj(psi))
     
+@jax.jit
+def get_sorted_eigvals(H) -> jnp.ndarray:
+    """
+    Calculates and sorts the eigenvalues for a given set of parameters.
+    We use eigvalsh because the Hamiltonian is Hermitian.
+    """
+    eigvals = jnp.linalg.eigvalsh(H)
+    return eigvals # Eigvalsh returns sorted eigenvalues by default
+
     
 def static_hamiltonian(
     dim_cavity : int,
@@ -83,9 +92,8 @@ def static_hamiltonian(
 
 def dynamical_hamiltonian(
     dim_cavity, 
-    omega_c, 
-    omega_e,
-    omega_l, 
+    delta_c, 
+    delta_a,
     g
     ):
     """
@@ -108,9 +116,7 @@ def dynamical_hamiltonian(
         function: A function H_t(t, E_func) that computes the Hamiltonian
                   matrix at time t.
     """
-    delta_c = omega_c - omega_l
-    delta_e = omega_e - omega_l
-    H0 = static_hamiltonian(dim_cavity, delta_c, delta_e, g)
+    H0 = static_hamiltonian(dim_cavity, delta_c, delta_a, g)
     
     sigma_m, sigma_p, _ = qubit_ops()
     
