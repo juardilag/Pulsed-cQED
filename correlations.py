@@ -88,94 +88,116 @@ def g1_matrix(
     """
     Calculates the full G1(t, tau) matrix for given arrays of t and tau.
     
+    If tau_array_neg is None, calculates only for tau >= 0.
+    
+    If tau_array_neg is provided, calculates the full matrix using the
+    "aligned grid" (no-interpolation) method. This *requires*
+    that the time steps in t_array and tau_array_pos are identical.
+    
     Args:
         rho_t_array (jax.Array): Array of density matrices at times t_array.
         t_array (jax.Array): Array of absolute times t.
-        a_L (jax.Array): The annihilation operator.
-        adag_L (jax.Array): The creation operator.
-        tau_array (jax.Array): The array of tau values (must be >= 0).
+        a_L (jax.Array): The annihilation operator (or sigma_minus).
+        adag_L (jax.Array): The creation operator (or sigma_plus).
+        tau_array_pos (jax.Array): Array of non-negative tau values (e.g., [0, dt, 2*dt, ...]).
+        tau_array_neg (jax.Array or None): Array of negative tau values 
+                                           (e.g., [-N*dt, ..., -dt]).
         L_ops (list of jax.Array): The list of collapse operators.
         H_t_func (function): Function returning H(t, E).
         E_func (function): Function returning E(t).
     Returns:
-        jnp.ndarray: The G1(t, tau) matrix.
+        jnp.ndarray: The G1(t, tau) matrix, either for tau>=0 or for all tau.
     """
 
-    if tau_array_neg == None:
-
+    # --- Case 1: Only calculate positive tau (original behavior) ---
+    if tau_array_neg is None:
+        print("Calculating G1(t, tau >= 0)...")
         G1_positive_matrix_list = []
         for i in range(len(t_array)):
-            # Call the imported, JIT-compiled function
+            # Call the JIT-compiled function
             G1_row = get_g1_row(
                 rho_t_array[i],   # rho_t
                 t_array[i],
                 a_L,            # a_L
                 adag_L,         # adag_L
-                tau_array_pos,      # tau_array
+                tau_array_pos,  # tau_array
                 L_ops,          # L_ops
-                H_t_func,     # H_t_func
-                E_func    # E_func
+                H_t_func,       # H_t_func
+                E_func          # E_func
             )
             G1_positive_matrix_list.append(G1_row)
 
         G1_positive_matrix = jnp.array(G1_positive_matrix_list)
         return G1_positive_matrix
-    
-    elif tau_array_neg != None:
-        G1_positive_matrix_list = []
 
+    # --- Case 2: Calculate full matrix using aligned-grid method ---
+    else:
+        print("Calculating G1(t, tau >= 0) [Lookup Table]...")
+        # 1. Calculate the positive-tau matrix first. This is our "lookup table".
+        G1_positive_matrix_list = []
         for i in range(len(t_array)):
-            # Call the imported, JIT-compiled function
             G1_row = get_g1_row(
-                rho_t_array[i],   # rho_t
-                t_array[i],
-                a_L,            # a_L
-                adag_L,         # adag_L
-                tau_array_pos,      # tau_array
-                L_ops,          # L_ops
-                H_t_func,     # H_t_func
-                E_func    # E_func
+                rho_t_array[i], t_array[i],
+                a_L, adag_L, 
+                tau_array_pos, 
+                L_ops, H_t_func, E_func
             )
             G1_positive_matrix_list.append(G1_row)
-
+        
         G1_positive_matrix = jnp.array(G1_positive_matrix_list)
+        
+        # 2. Get grid sizes
+        N_t = len(t_array)
+        N_tau_pos = len(tau_array_pos)
+        N_tau_neg = len(tau_array_neg)
 
-        G1_real_np = np.array(G1_positive_matrix.real)
-        G1_imag_np = np.array(G1_positive_matrix.imag)
-
-        interp_real = RectBivariateSpline(
-            np.array(t_array), np.array(tau_array_pos), G1_real_np, kx=1, ky=1
-        )
-        interp_imag = RectBivariateSpline(
-            np.array(t_array), np.array(tau_array_pos), G1_imag_np, kx=1, ky=1
-        )
+        # Sanity check for the aligned-grid method
+        if N_tau_neg != N_tau_pos - 1:
+            print(f"Warning: Grid size mismatch. N_tau_neg ({N_tau_neg}) "
+                  f"should be N_tau_pos - 1 ({N_tau_pos - 1}).")
+            # Proceeding, but this is a common source of errors.
 
         G1_negative_matrix_list = []
 
-        for i in range(len(t_array)):
-            t_i = t_array[i]
+        # 3. Loop over all 't' indices
+        for i in range(N_t):
             G1_neg_row = []
             
-            # Loop over all negative delay times 'tau_neg'
-            for tau_neg in tau_array_neg:
-                # These are the args for the identity: G1(t, tau_neg) = conj[G1(t', tau_d)]
-                tau_d = -tau_neg      # The corresponding positive delay (e.g., 1.5)
-                t_prime = t_i + tau_neg # The shifted time (e.g., t_i - 1.5)
+            # 4. Loop over all 'negative tau' indices
+            # j loops from 0 to N_tau_neg-1
+            for j in range(N_tau_neg):
                 
-                # We find G1(t', tau_d) by "looking it up" in our interpolator
-                # 'grid=False' tells the interpolator we are asking for one point
-                G_helper_real = interp_real(t_prime, tau_d, grid=False)
-                G_helper_imag = interp_imag(t_prime, tau_d, grid=False)
+                # We need G(t_i, tau_neg_j)
+                # This requires G(t_m, tau_pos_k)
+                #
+                # The index k for the *positive* tau step (e.g., dt, 2*dt, ...)
+                # (assuming standard grid alignment)
+                # j=0 (e.g., -20.0) -> k = N_tau_pos-1 (e.g., +20.0)
+                # j=N_tau_neg-1 (e.g., -0.04) -> k = 1 (e.g., +0.04)
+                k = (N_tau_neg - 1) - j + 1
                 
-                G_helper = G_helper_real + 1j * G_helper_imag
+                # The index m for the shifted time t' = t_i - tau_k
+                m = i - k
                 
-                # Apply the identity
+                # 5. Check for "out of bounds" (causality)
+                # If m < 0, it means t' is before our simulation started (t_array[0])
+                # In this "pre-history" region, the correlation is 0.
+                if m < 0:
+                    G_helper = 0.0 + 0.0j
+                else:
+                    # 6. The "Lookup"
+                    # No interpolation! Just grab the value from the matrix.
+                    G_helper = G1_positive_matrix[m, k]
+                
                 G_val = jnp.conj(G_helper)
                 G1_neg_row.append(G_val)
-                
+
             G1_negative_matrix_list.append(jnp.array(G1_neg_row))
 
         G1_negative_matrix = jnp.array(G1_negative_matrix_list)
 
+        # 7. Combine the negative and positive matrices
         G1_matrix_full = jnp.hstack([G1_negative_matrix, G1_positive_matrix])
+        
         return G1_matrix_full
+    
