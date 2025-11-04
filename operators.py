@@ -37,27 +37,6 @@ def qubit_ops() -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     return sigma_m, sigma_p, sigma_e
 
 
-def projector(psi : jnp.ndarray) -> jnp.ndarray:
-    """
-    Creates a projector operator for a given state vector.
-
-    Args:
-        psi (jnp.ndarray): A state vector
-    Returns:
-        jnp.ndarray: The projector operator |psi><psi|
-    """
-    return jnp.outer(psi, jnp.conj(psi))
-    
-@jax.jit
-def get_sorted_eigvals(H) -> jnp.ndarray:
-    """
-    Calculates and sorts the eigenvalues for a given set of parameters.
-    We use eigvalsh because the Hamiltonian is Hermitian.
-    """
-    eigvals = jnp.linalg.eigvalsh(H)
-    return eigvals # Eigvalsh returns sorted eigenvalues by default
-
-    
 def static_hamiltonian(
     dim_cavity : int,
     omega_c : float, 
