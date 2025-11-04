@@ -49,8 +49,6 @@ def lindblad_me_diffrax(t, rho, args):
     
     return d_rho_dt
 
-
-#@jax.jit
 def solve_dynamics(rho_initial, t_array, H_t_func, E_func, L_ops, solver=diffrax.Dopri5()):
     """
     Solves the density matrix dynamics using the Lindblad Master Equation.

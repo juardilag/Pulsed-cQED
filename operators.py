@@ -41,7 +41,7 @@ def static_hamiltonian(
     dim_cavity : int,
     omega_c : float, 
     omega_a : float, 
-    g) -> jnp.ndarray:
+    g) -> jnp.ndarray:  
     """
     Constructs the static part of the Jaynes-Cummings Hamiltonian H0 / hbar.
     Args:
