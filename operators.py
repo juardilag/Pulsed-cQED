@@ -43,7 +43,9 @@ def static_hamiltonian(
     omega_a : float, 
     g) -> jnp.ndarray:  
     """
-    Constructs the static part of the Jaynes-Cummings Hamiltonian H0 / hbar.
+    Constructs the static part of the Quantum Rabi Model (QRM) Hamiltonian H0 / hbar.
+    (This now includes the anti-rotating terms.)
+    
     Args:
         dim_cavity (int): Dimension of the cavity Hilbert space (max_occupancy + 1).
         omega_c (float): Cavity frequency.
@@ -58,11 +60,17 @@ def static_hamiltonian(
     I_c = jnp.eye(dim_cavity, dtype=jnp.complex64)
     I_q = jnp.eye(2, dtype=jnp.complex64)
     
-    H_c = omega_c*jnp.kron(n_op, I_q)   
-    
+    H_c = omega_c * jnp.kron(n_op, I_q)   
     H_q = omega_a * jnp.kron(I_c, sigma_e)
     
-    H_int = g * (jnp.kron(adag, sigma_m) + jnp.kron(a, sigma_p))
+    # Original RWA (Jaynes-Cummings) terms: a_dag * sigma_m + a * sigma_p
+    H_rwa = g * (jnp.kron(adag, sigma_m) + jnp.kron(a, sigma_p))
+    
+    # Anti-rotating terms: a_dag * sigma_p + a * sigma_m
+    H_anti_rwa = g * (jnp.kron(adag, sigma_p) + jnp.kron(a, sigma_m))
+    
+    # The full Quantum Rabi Model interaction:
+    H_int = H_rwa + H_anti_rwa
     
     H0 = H_c + H_q + H_int
 

@@ -200,4 +200,3 @@ def g1_matrix(
         G1_matrix_full = jnp.hstack([G1_negative_matrix, G1_positive_matrix])
         
         return G1_matrix_full
-    
