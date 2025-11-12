@@ -62,17 +62,10 @@ def static_hamiltonian(
     
     H_c = omega_c * jnp.kron(n_op, I_q)   
     H_q = omega_a * jnp.kron(I_c, sigma_e)
-    
-    # Original RWA (Jaynes-Cummings) terms: a_dag * sigma_m + a * sigma_p
+
     H_rwa = g * (jnp.kron(adag, sigma_m) + jnp.kron(a, sigma_p))
     
-    # Anti-rotating terms: a_dag * sigma_p + a * sigma_m
-    H_anti_rwa = g * (jnp.kron(adag, sigma_p) + jnp.kron(a, sigma_m))
-    
-    # The full Quantum Rabi Model interaction:
-    H_int = H_rwa + H_anti_rwa
-    
-    H0 = H_c + H_q + H_int
+    H0 = H_c + H_q + H_rwa
 
     return H0
 
