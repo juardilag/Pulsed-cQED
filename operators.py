@@ -165,3 +165,47 @@ def collective_ops(N: int) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     
     return Jm, Jp, Je
 
+
+def static_hamiltonian_tc(
+    dim_cavity : int,
+    N : int,               
+    omega_c : float, 
+    omega_a : float, 
+    g : float) -> jnp.ndarray:  
+    """
+    Constructs the static Tavis-Cummings (TC) Hamiltonian H0 / hbar
+    using the Jm, Jp, Je operator convention (ground state at zero energy).
+    
+    Args:
+        dim_cavity (int): Dimension of the cavity Hilbert space (max_occupancy + 1).
+        N (int): The number of two-level atoms (qubits).
+        omega_c (float): Cavity frequency.
+        omega_a (float): Qubit transition frequency.
+        g (float): Single-atom coupling strength.
+    Returns:
+        jnp.ndarray: The static Tavis-Cummings Hamiltonian matrix H0 / hbar.
+        """
+    # 1. Get operators for the two sub-spaces
+    a, adag, n_op = boson_ops(dim_cavity)
+    Jm, Jp, Je = collective_ops(N) # <-- Unpacks Je
+    
+    # 2. Get dimensions and identity matrices
+    dim_atoms = N + 1
+    I_c = jnp.eye(dim_cavity)
+    I_a = jnp.eye(dim_atoms)
+    
+    # 3. Construct the full Hamiltonian in the product space H_cavity ⊗ H_atoms
+    
+    # Cavity Hamiltonian: H_c = omega_c * (n_op ⊗ I_a)
+    H_c = omega_c * jnp.kron(n_op, I_a)   
+    
+    # Atomic Hamiltonian: H_a = omega_a * (I_c ⊗ Je)
+    # This sets the ground state (0 excitations) to 0 energy.
+    H_a = omega_a * jnp.kron(I_c, Je)
+
+    # Interaction Hamiltonian: H_int = g * ( (a ⊗ Jp) + (adag ⊗ Jm) )
+    H_int = g * (jnp.kron(a, Jp) + jnp.kron(adag, Jm))
+    
+    H0 = H_c + H_a + H_int
+
+    return H0
