@@ -125,3 +125,43 @@ def dynamical_hamiltonian(
         return H0 + H_drive
 
     return H_t
+
+
+# Collective Operators and Hamiltonian
+
+def collective_ops(N: int) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """
+    Constructs the collective spin operators Jm, Jp, and Je (excitation counter)
+    for N atoms, acting on the (N+1)-dimensional symmetric Dicke space.
+    
+    Jm: Collective lowering operator (J-)
+    Jp: Collective raising operator (J+)
+    Je: Excitation number operator (eigenvalues 0, 1, ..., N)
+    
+    Args:
+        N (int): The number of atoms.
+        
+    Returns:
+        (Jm, Jp, Je): Tuple of JAX arrays.
+    """
+    dim_atoms = N + 1
+    
+    # 1. Construct Jp (J+)
+    # Jp |m> = sqrt((N-m)*(m+1)) |m+1>
+    # where m = 0, 1, ..., N-1
+    Jp = jnp.zeros((dim_atoms, dim_atoms), dtype=jnp.complex128)
+    m_values = jnp.arange(dim_atoms - 1)
+    jp_diag = jnp.sqrt((N - m_values) * (m_values + 1))
+    Jp = Jp.at[jnp.arange(1, dim_atoms), jnp.arange(dim_atoms - 1)].set(jp_diag)
+
+    # 2. Construct Jm (J-)
+    # Jm is the hermitian conjugate of Jp
+    Jm = Jp.T.conj()
+    
+    # 3. Construct Je (Excitation Number Operator)
+    # Je |m> = m |m>, where m is the number of excitations (0 to N)
+    Je_diag = jnp.arange(dim_atoms)
+    Je = jnp.diag(Je_diag).astype(jnp.complex128)
+    
+    return Jm, Jp, Je
+
