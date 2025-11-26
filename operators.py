@@ -99,11 +99,16 @@ def dynamical_hamiltonian(
     H0 = static_hamiltonian(dim_cavity, delta_c, delta_a, g)
     
     sigma_m, sigma_p, _ = qubit_ops()
+    a, adag, _ =  boson_ops(dim_cavity)
     
     I_c = jnp.eye(dim_cavity)
+    I_a = jnp.eye(2)
 
     sigma_p_full = jnp.kron(I_c, sigma_p)
     sigma_m_full = jnp.kron(I_c, sigma_m)
+
+    a_full = jnp.kron(a, I_a)
+    a_dag_full = jnp.kron(adag, I_a)
 
     # 5. Define and return the function that computes H(t)    
     @partial(jax.jit, static_argnames=['E_func'])
@@ -149,7 +154,7 @@ def collective_ops(N: int) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     # 1. Construct Jp (J+)
     # Jp |m> = sqrt((N-m)*(m+1)) |m+1>
     # where m = 0, 1, ..., N-1
-    Jp = jnp.zeros((dim_atoms, dim_atoms), dtype=jnp.complex128)
+    Jp = jnp.zeros((dim_atoms, dim_atoms))
     m_values = jnp.arange(dim_atoms - 1)
     jp_diag = jnp.sqrt((N - m_values) * (m_values + 1))
     Jp = Jp.at[jnp.arange(1, dim_atoms), jnp.arange(dim_atoms - 1)].set(jp_diag)
@@ -161,7 +166,7 @@ def collective_ops(N: int) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     # 3. Construct Je (Excitation Number Operator)
     # Je |m> = m |m>, where m is the number of excitations (0 to N)
     Je_diag = jnp.arange(dim_atoms)
-    Je = jnp.diag(Je_diag).astype(jnp.complex128)
+    Je = jnp.diag(Je_diag)
     
     return Jm, Jp, Je
 
