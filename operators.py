@@ -126,7 +126,7 @@ def dynamical_hamiltonian(
         """
         # Get the scalar drive value
         E_val = E_func(t)
-        H_drive = 0.5*(E_val*sigma_p_full + jnp.conj(E_val)*sigma_m_full)
+        H_drive = 0.5*(E_val*a_dag_full + jnp.conj(E_val)*a_full)
         return H0 + H_drive
 
     return H_t

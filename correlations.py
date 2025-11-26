@@ -127,3 +127,114 @@ def g1_matrix(
 
     G1_positive_matrix = jnp.array(G1_positive_matrix_list)
     return G1_positive_matrix
+
+
+@partial(jax.jit, static_argnames=("H_t_func", "E_func"))
+def get_g2_row(
+    rho_t,          
+    t,              
+    a_L,            
+    adag_L,         
+    tau_array,      
+    L_ops,          
+    H_t_func,      
+    E_func,         
+) -> jnp.ndarray:
+    """
+    Calculates a single row of the unnormalized G2(t, tau) matrix for a given t.
+    
+    Corresponds to: <a^dag(t) a^dag(t+tau) a(t+tau) a(t)>
+    
+    Args:
+        rho_t (jax.Array): The density matrix at time t, rho(t).
+        t (float): The absolute time t.
+        a_L (jax.Array): The annihilation operator.
+        adag_L (jax.Array): The creation operator.
+        tau_array (jax.Array): The array of tau values (must be >= 0).
+        L_ops (list of jax.Array): The list of collapse operators.
+        H_t_func (function): Function returning H(t, E).
+        E_func (function): Function returning E(t).
+    Returns:
+        jax.Array: The row of G2(t, tau) [unnormalized] for the given t.
+    """
+    
+    # 0. Define the number operator for the final trace
+    n_op = adag_L @ a_L
+
+    # 1. QRT initial condition for G2: chi(t, 0) = a * rho(t) * a_dag
+    # This represents the state immediately after a photon detection at time t.
+    chi_0 = a_L @ rho_t @ adag_L
+    
+    # The QRT evolution from t to t+tau uses the same shifted Hamiltonian 
+    # logic as the G1 implementation.
+    
+    # H_tau_func(tau, E) will call H_t_func(t + tau, E)
+    H_tau_func = lambda tau, E_f: H_t_func(t + tau, E_f)
+    # E_tau_func(tau) will call E_func(t + tau)
+    E_tau_func = lambda tau: E_func(t + tau)
+    
+    # 2. Solve QRT evolution: d(chi)/d(tau) = L(chi)
+    # The dynamics are identical to G1, just acting on a different initial state.
+    chi_all_tau = solve_dynamics(
+        chi_0, 
+        tau_array, 
+        H_tau_func,  
+        E_tau_func,  
+        L_ops
+    )
+    
+    # 3. Calculate G2(t, tau) = Tr(n * chi(t, tau))
+    # We trace against the number operator n = a_dag * a
+    G2_row = jax.vmap(calculate_trace, in_axes=(0, None))(chi_all_tau, n_op)
+    
+    return G2_row
+
+def g2_matrix(
+    rho_t_array,    
+    t_array,        
+    a_L,            
+    adag_L,         
+    tau_array_pos,      
+    L_ops,          
+    H_t_func,      
+    E_func          
+) -> jnp.ndarray:
+    """
+    Calculates the full unnormalized G2(t, tau) matrix.
+    
+    To get the normalized g2(t, tau), you must divide this result by:
+    <n(t)> * <n(t+tau)>
+    
+    Args:
+        rho_t_array (jax.Array): Array of density matrices at times t_array.
+        t_array (jax.Array): Array of absolute times t.
+        a_L (jax.Array): The annihilation operator.
+        adag_L (jax.Array): The creation operator.
+        tau_array_pos (jax.Array): Array of non-negative tau values.
+        L_ops (list of jax.Array): The list of collapse operators.
+        H_t_func (function): Function returning H(t, E).
+        E_func (function): Function returning E(t).
+    Returns:
+        jnp.ndarray: The unnormalized G2 matrix.
+    """
+
+    print("Calculating G2(t, tau >= 0)...")
+    G2_matrix_list = []
+    
+    # Depending on memory, you might want to jax.lax.scan this, 
+    # but a Python loop is safer for debugging/printing progress.
+    for i in range(len(t_array)):
+        G2_row = get_g2_row(
+            rho_t_array[i],   # rho_t
+            t_array[i],
+            a_L,            
+            adag_L,         
+            tau_array_pos,  
+            L_ops,          
+            H_t_func,       
+            E_func          
+        )
+        G2_matrix_list.append(G2_row)
+
+    G2_matrix = jnp.array(G2_matrix_list)
+    return G2_matrix
