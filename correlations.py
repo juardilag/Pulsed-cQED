@@ -34,6 +34,8 @@ def get_g1_row(
     It evolves both the regression matrix 'sigma' (for the numerator)
     and the density matrix 'rho' (for the denominator n(t+tau)) simultaneously.
     """
+    # 0. Definitions
+    n_op = adag_L @ a_L
     
     # 1. Setup Initial Conditions
     sigma_0 = a_L @ rho_t
@@ -61,42 +63,16 @@ def get_g1_row(
     calculate_trace_vmap = jax.vmap(calculate_trace, in_axes=(0, None))
     numerator = calculate_trace_vmap(sigma_tau, adag_L)
     
-    n_t = calculate_trace(rho_t, adag_L @ a_L)
-    n_t_plus_tau = calculate_trace_vmap(rho_tau, adag_L @ a_L)
-    
-    # 5. Normalize with Robust Protection
-    pop_product = jnp.real(n_t * n_t_plus_tau)
-    
-    # A slightly higher threshold to catch the "stripes" earlier
-    threshold = 1e-6
-    
-    # Soft denominator to prevent explosion
-    denom = jnp.sqrt(pop_product + 1e-18)
-    
-    # Raw calculation
-    g1_raw = numerator / denom
-    
-    # FILTER 1: If population is too low, set correlation to 0 (vacuum has no coherence)
-    g1_masked = jnp.where(pop_product < threshold, 0.0, g1_raw)
-    
-    # FILTER 2: CLIPPING (Crucial Step)
-    # Physically, modulus |g1| cannot exceed 1.0. 
-    # We clip the absolute value magnitude while preserving phase (if complex)
-    # But since you are plotting jnp.abs(g1), we can just return the array
-    # and let the user clip the magnitude later, OR clip strictly here.
-    
-    # Here is a strict magnitude clip:
-    mag = jnp.abs(g1_masked)
-    phase = jnp.angle(g1_masked)
-    
-    # If magnitude > 1.0, force it to 1.0
-    clean_mag = jnp.minimum(mag, 1.0)
-    
-    # Reconstruct (optional, if you need phase later)
-    g1 = clean_mag * jnp.exp(1j * phase)
-    G1 = numerator
-    
-    return G1, g1
+    # Denominator (Intensities)
+    n_t = jnp.real(calculate_trace(rho_t, n_op))
+    n_t_plus_tau = jnp.real(calculate_trace_vmap(rho_tau, n_op))
+    epsilon_sq = 1e-3 
+    denominator = jnp.sqrt(n_t*n_t_plus_tau + epsilon_sq)
+
+    # --- REGULARIZATION ---
+    # epsilon corresponds to the "noise floor" intensity.
+    g1_regularized = numerator / (denominator )
+    return numerator, denominator, g1_regularized
 
 def g1_matrix(
     rho_t_array,    
@@ -132,13 +108,13 @@ def g1_matrix(
         jnp.ndarray: The G1(t, tau) matrix, either for tau>=0 or for all tau.
     """
 
-    # --- Case 1: Only calculate positive tau (original behavior) ---
-    print("Calculating G1(t, tau >= 0)...")
-    G1_positive_matrix_list = []
-    g1_positive_matrix_list = []
+    numerator_list = []
+    denominator_list = []
+    g2_2d_list = []
+
     for i in range(len(t_array)):
         # Call the JIT-compiled function
-        G1_row, g1_row = get_g1_row(
+        numerator, denominator, g1_regularized = get_g1_row(
             rho_t_array[i],   # rho_t
             t_array[i],
             a_L,            # a_L
@@ -148,12 +124,15 @@ def g1_matrix(
             H_t_func,       # H_t_func
             E_func          # E_func
         )
-        G1_positive_matrix_list.append(G1_row)
-        g1_positive_matrix_list.append(g1_row)
+        numerator_list.append(numerator)
+        denominator_list.append(denominator)
+        g2_2d_list.append(g1_regularized)
 
-    G1_positive_matrix = jnp.array(G1_positive_matrix_list)
-    g1_positive_matrix = jnp.array(g1_positive_matrix_list)
-    return G1_positive_matrix, g1_positive_matrix
+    # Convert to arrays
+    Num_matrix = jnp.array(numerator_list)   # Shape (N_t, N_tau)
+    Denom_matrix = jnp.array(denominator_list) # Shape (N_t, N_tau)
+    g1_2d_matrix = jnp.array(g2_2d_list)
+    return Num_matrix, Denom_matrix, g1_2d_matrix
 
 
 @partial(jax.jit, static_argnames=("H_t_func", "E_func"))
@@ -206,26 +185,19 @@ def get_g2_row(
     calculate_trace_vmap = jax.vmap(calculate_trace, in_axes=(0, None))
     
     # Numerator (Correlation)
-    G2_unnorm = jnp.real(calculate_trace_vmap(chi_tau, n_op))
-    G2_unnorm = jnp.maximum(G2_unnorm, 0.0) # Force positivity
+    numerator = jnp.real(calculate_trace_vmap(chi_tau, n_op))
     
     # Denominator (Intensities)
     n_t = jnp.real(calculate_trace(rho_t, n_op))
     n_t_plus_tau = jnp.real(calculate_trace_vmap(rho_tau, n_op))
-    pop_product = n_t * n_t_plus_tau
+    denominator = n_t*n_t_plus_tau
 
-    # --- THE FIX: REGULARIZATION ---
+    # --- REGULARIZATION ---
     # epsilon corresponds to the "noise floor" intensity.
-    # If n < epsilon, we suppress the signal.
-    # A value of 1e-4 is usually perfect for visualization.
     epsilon_sq = 1e-3 
+    g2_regularized = numerator / (denominator + epsilon_sq)
     
-    # This Soft Denominator works everywhere.
-    # - If pop_product >> 1e-9: Result is standard g2.
-    # - If pop_product << 1e-9: Result goes to 0 (because numerator is also small).
-    g2_regularized = G2_unnorm / (pop_product + epsilon_sq)
-    
-    return G2_unnorm, pop_product, g2_regularized
+    return numerator, denominator, g2_regularized
 
 def g2_matrix(
     rho_t_array,    
@@ -257,14 +229,10 @@ def g2_matrix(
     """
 
     print("Calculating G2(t, tau >= 0)...")
-    # Lists for the INTEGRAL calculation
     numerator_list = []
     denominator_list = []
-
-    # List for the HEATMAP calculation
     g2_2d_list = []
-    # Depending on memory, you might want to jax.lax.scan this, 
-    # but a Python loop is safer for debugging/printing progress.
+
     for i in range(len(t_array)):
         # Unpack the 3 values
         raw_num, raw_denom, g2_row_plot = get_g2_row(
