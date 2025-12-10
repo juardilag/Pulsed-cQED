@@ -70,7 +70,66 @@ def static_hamiltonian(
     return H0
 
 
-def dynamical_hamiltonian(
+def dynamical_hamiltonian_cavity(
+    dim_cavity, 
+    delta_c, 
+    delta_a,
+    g
+    ):
+    """
+    A function factory that creates the time-dependent Hamiltonian function H(t).
+    
+    This function computes the time-independent parts of the Hamiltonian once
+    and returns a function that can be called with time `t` and the 
+    drive envelope function E_func.
+    
+    The returned Hamiltonian is H(t) / hbar, assuming all parameters
+    (delta_c, delta_q, g, E_func) are given in units of angular frequency.
+
+    Args:
+        dim_cavity (int): Dimension of the cavity Hilbert space (max_occupancy + 1).
+        omega_c (float): Cavity frequency.
+        omega_e (float): Qubit transition frequency.
+        g (float): Coupling strength between the cavity and qubit.
+
+    Returns:
+        function: A function H_t(t, E_func) that computes the Hamiltonian
+                  matrix at time t.
+    """
+    H0 = static_hamiltonian(dim_cavity, delta_c, delta_a, g)
+    
+    sigma_m, sigma_p, _ = qubit_ops()
+    a, adag, _ =  boson_ops(dim_cavity)
+    
+    I_c = jnp.eye(dim_cavity)
+    I_a = jnp.eye(2)
+
+    a_full = jnp.kron(a, I_a)
+    a_dag_full = jnp.kron(adag, I_a)
+
+    # 5. Define and return the function that computes H(t)    
+    @partial(jax.jit, static_argnames=['E_func'])
+    def H_t(t, E_func):
+        """
+        Computes the total Hamiltonian H(t)/hbar at a specific time t.
+
+        Args:
+            t (float): The current time.
+            E_func (callable): A function E_func(t) that returns the 
+                               complex scalar value of the drive envelope E(t).
+
+        Returns:
+            jax.Array: The total Hamiltonian matrix at time t.
+        """
+        # Get the scalar drive value
+        E_val = E_func(t)
+        H_drive = 0.5*(E_val*a_dag_full + jnp.conj(E_val)*a_full)
+        return H0 + H_drive
+
+    return H_t
+
+
+def dynamical_hamiltonian_atom(
     dim_cavity, 
     delta_c, 
     delta_a,
@@ -107,9 +166,6 @@ def dynamical_hamiltonian(
     sigma_p_full = jnp.kron(I_c, sigma_p)
     sigma_m_full = jnp.kron(I_c, sigma_m)
 
-    a_full = jnp.kron(a, I_a)
-    a_dag_full = jnp.kron(adag, I_a)
-
     # 5. Define and return the function that computes H(t)    
     @partial(jax.jit, static_argnames=['E_func'])
     def H_t(t, E_func):
@@ -126,11 +182,10 @@ def dynamical_hamiltonian(
         """
         # Get the scalar drive value
         E_val = E_func(t)
-        H_drive = 0.5*(E_val*a_dag_full + jnp.conj(E_val)*a_full)
+        H_drive = 0.5*(E_val*sigma_p_full + jnp.conj(E_val)*sigma_m_full)
         return H0 + H_drive
 
     return H_t
-
 
 # Collective Operators and Hamiltonian
 
