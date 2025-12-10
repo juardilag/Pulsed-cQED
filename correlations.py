@@ -225,7 +225,7 @@ def get_g2_row(
     # - If pop_product << 1e-9: Result goes to 0 (because numerator is also small).
     g2_regularized = G2_unnorm / (pop_product + epsilon_sq)
     
-    return G2_unnorm, g2_regularized, pop_product
+    return G2_unnorm, pop_product, g2_regularized
 
 def g2_matrix(
     rho_t_array,    
@@ -280,4 +280,4 @@ def g2_matrix(
     Num_matrix = jnp.array(numerator_list)   # Shape (N_t, N_tau)
     Denom_matrix = jnp.array(denominator_list) # Shape (N_t, N_tau)
     g2_2d_matrix = jnp.array(g2_2d_list)
-    return Num_matrix, Denom_matrix, g2_2d_list
+    return Num_matrix, Denom_matrix, g2_2d_matrix
