@@ -287,11 +287,11 @@ def g2_matrix(
 
     print("Calculating G2(t, tau >= 0)...")
     G2_matrix_list = []
-    
+    g2_matrix_list = []
     # Depending on memory, you might want to jax.lax.scan this, 
     # but a Python loop is safer for debugging/printing progress.
     for i in range(len(t_array)):
-        G2_row = get_g2_row(
+        G2_row, g2_row = get_g2_row(
             rho_t_array[i],   # rho_t
             t_array[i],
             a_L,            
@@ -302,6 +302,8 @@ def g2_matrix(
             E_func          
         )
         G2_matrix_list.append(G2_row)
+        g2_matrix_list.append(g2_row)
 
     G2_matrix = jnp.array(G2_matrix_list)
-    return G2_matrix
+    g2_matrix = jnp.array(g2_matrix_list)
+    return G2_matrix, g2_matrix
