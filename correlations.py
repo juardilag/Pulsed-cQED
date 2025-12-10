@@ -1,9 +1,7 @@
 from evolution import solve_dynamics
 import jax
 import jax.numpy as jnp
-import numpy as np
 from functools import partial
-from scipy.interpolate import RectBivariateSpline
 
 @jax.jit
 def calculate_trace(sigma, adag_L):
@@ -95,9 +93,10 @@ def get_g1_row(
     clean_mag = jnp.minimum(mag, 1.0)
     
     # Reconstruct (optional, if you need phase later)
-    g1_clean = clean_mag * jnp.exp(1j * phase)
+    g1 = clean_mag * jnp.exp(1j * phase)
+    G1 = numerator
     
-    return g1_clean
+    return G1, g1
 
 def g1_matrix(
     rho_t_array,    
@@ -136,9 +135,10 @@ def g1_matrix(
     # --- Case 1: Only calculate positive tau (original behavior) ---
     print("Calculating G1(t, tau >= 0)...")
     G1_positive_matrix_list = []
+    g1_positive_matrix_list = []
     for i in range(len(t_array)):
         # Call the JIT-compiled function
-        G1_row = get_g1_row(
+        G1_row, g1_row = get_g1_row(
             rho_t_array[i],   # rho_t
             t_array[i],
             a_L,            # a_L
@@ -149,9 +149,11 @@ def g1_matrix(
             E_func          # E_func
         )
         G1_positive_matrix_list.append(G1_row)
+        g1_positive_matrix_list.append(g1_row)
 
     G1_positive_matrix = jnp.array(G1_positive_matrix_list)
-    return G1_positive_matrix
+    g1_positive_matrix = jnp.array(g1_positive_matrix_list)
+    return G1_positive_matrix, g1_positive_matrix
 
 
 @partial(jax.jit, static_argnames=("H_t_func", "E_func"))
@@ -183,36 +185,76 @@ def get_g2_row(
         jax.Array: The row of G2(t, tau) [unnormalized] for the given t.
     """
     
-    # 0. Define the number operator for the final trace
+# 0. Define the number operator
     n_op = adag_L @ a_L
 
-    # 1. QRT initial condition for G2: chi(t, 0) = a * rho(t) * a_dag
-    # This represents the state immediately after a photon detection at time t.
+    # --- 1. Initial Conditions ---
+    
+    # A. Numerator start: chi(0) = a * rho(t) * a^dag
+    # This corresponds to the state conditioned on detecting a photon at time t
     chi_0 = a_L @ rho_t @ adag_L
     
-    # The QRT evolution from t to t+tau uses the same shifted Hamiltonian 
-    # logic as the G1 implementation.
+    # B. Denominator start: rho(0) = rho(t)
+    rho_0 = rho_t
     
-    # H_tau_func(tau, E) will call H_t_func(t + tau, E)
+    # Stack for parallel solving: shape (2, N, N)
+    stacked_0 = jnp.stack([chi_0, rho_0])
+
+    # --- 2. Time Functions (shifted by t) ---
     H_tau_func = lambda tau, E_f: H_t_func(t + tau, E_f)
-    # E_tau_func(tau) will call E_func(t + tau)
     E_tau_func = lambda tau: E_func(t + tau)
     
-    # 2. Solve QRT evolution: d(chi)/d(tau) = L(chi)
-    # The dynamics are identical to G1, just acting on a different initial state.
-    chi_all_tau = solve_dynamics(
-        chi_0, 
+    # --- 3. Solve Dynamics (Parallel) ---
+    solve_dynamics_vmap = jax.vmap(solve_dynamics, in_axes=(0, None, None, None, None))
+    
+    stacked_all_tau = solve_dynamics_vmap(
+        stacked_0, 
         tau_array, 
-        H_tau_func,  
-        E_tau_func,  
+        H_tau_func, 
+        E_tau_func, 
         L_ops
     )
     
-    # 3. Calculate G2(t, tau) = Tr(n * chi(t, tau))
-    # We trace against the number operator n = a_dag * a
-    G2_row = jax.vmap(calculate_trace, in_axes=(0, None))(chi_all_tau, n_op)
+    chi_tau = stacked_all_tau[0] # Evolution of the "click" state
+    rho_tau = stacked_all_tau[1] # Evolution of the background state
+
+    # --- 4. Calculate Observables ---
+    calculate_trace_vmap = jax.vmap(calculate_trace, in_axes=(0, None))
     
-    return G2_row
+    # A. Numerator: G2(t, tau) = Tr(n * chi(tau))
+    # This is the unnormalized coincidence rate
+    G2_unnormalized = jnp.real(calculate_trace_vmap(chi_tau, n_op))
+    
+    # B. Denominator Part 1: n(t) = Tr(n * rho(t))
+    # Scalar value at time t
+    n_t = jnp.real(calculate_trace(rho_t, n_op))
+    
+    # C. Denominator Part 2: n(t + tau) = Tr(n * rho(tau))
+    # Vector value for each tau step
+    n_t_plus_tau = jnp.real(calculate_trace_vmap(rho_tau, n_op))
+    
+    # --- 5. Normalize with Robust Thresholding ---
+    
+    # Denominator is n(t) * n(t+tau)  (NO Square root for g2!)
+    pop_product = n_t * n_t_plus_tau
+    
+    # Threshold to avoid division by zero in vacuum
+    # If the product of populations is effectively zero, g2 is undefined/divergent.
+    threshold = 1e-18 # Can be tighter than g1 since we deal with intensities
+    
+    # Safe denominator
+    denom = pop_product + 1e-20
+    
+    g2_raw = G2_unnormalized / denom
+    
+    # MASKING:
+    # If population is too small, force g2 to 0.0 (or 1.0, depending on preference).
+    # 0.0 is usually better for "dark" plots in vacuum regions.
+    g2_normalized = jnp.where(pop_product < threshold, 0.0, g2_raw)
+    
+    # Note: We do NOT clip g2 to 1.0, because bunching (g2 > 1) is real physics!
+    
+    return G2_unnormalized, g2_normalized
 
 def g2_matrix(
     rho_t_array,    
