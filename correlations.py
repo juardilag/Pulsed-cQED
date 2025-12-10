@@ -185,76 +185,47 @@ def get_g2_row(
         jax.Array: The row of G2(t, tau) [unnormalized] for the given t.
     """
     
-# 0. Define the number operator
+    # 0. Definitions
     n_op = adag_L @ a_L
-
-    # --- 1. Initial Conditions ---
     
-    # A. Numerator start: chi(0) = a * rho(t) * a^dag
-    # This corresponds to the state conditioned on detecting a photon at time t
+    # 1. Init Conditions
     chi_0 = a_L @ rho_t @ adag_L
-    
-    # B. Denominator start: rho(0) = rho(t)
     rho_0 = rho_t
-    
-    # Stack for parallel solving: shape (2, N, N)
     stacked_0 = jnp.stack([chi_0, rho_0])
 
-    # --- 2. Time Functions (shifted by t) ---
+    # 2. Dynamics
     H_tau_func = lambda tau, E_f: H_t_func(t + tau, E_f)
     E_tau_func = lambda tau: E_func(t + tau)
     
-    # --- 3. Solve Dynamics (Parallel) ---
     solve_dynamics_vmap = jax.vmap(solve_dynamics, in_axes=(0, None, None, None, None))
+    stacked_all_tau = solve_dynamics_vmap(stacked_0, tau_array, H_tau_func, E_tau_func, L_ops)
     
-    stacked_all_tau = solve_dynamics_vmap(
-        stacked_0, 
-        tau_array, 
-        H_tau_func, 
-        E_tau_func, 
-        L_ops
-    )
-    
-    chi_tau = stacked_all_tau[0] # Evolution of the "click" state
-    rho_tau = stacked_all_tau[1] # Evolution of the background state
+    chi_tau, rho_tau = stacked_all_tau[0], stacked_all_tau[1]
 
-    # --- 4. Calculate Observables ---
+    # 3. Observables
     calculate_trace_vmap = jax.vmap(calculate_trace, in_axes=(0, None))
     
-    # A. Numerator: G2(t, tau) = Tr(n * chi(tau))
-    # This is the unnormalized coincidence rate
-    G2_unnormalized = jnp.real(calculate_trace_vmap(chi_tau, n_op))
+    # Numerator (Correlation)
+    G2_unnorm = jnp.real(calculate_trace_vmap(chi_tau, n_op))
+    G2_unnorm = jnp.maximum(G2_unnorm, 0.0) # Force positivity
     
-    # B. Denominator Part 1: n(t) = Tr(n * rho(t))
-    # Scalar value at time t
+    # Denominator (Intensities)
     n_t = jnp.real(calculate_trace(rho_t, n_op))
-    
-    # C. Denominator Part 2: n(t + tau) = Tr(n * rho(tau))
-    # Vector value for each tau step
     n_t_plus_tau = jnp.real(calculate_trace_vmap(rho_tau, n_op))
-    
-    # --- 5. Normalize with Robust Thresholding ---
-    
-    # Denominator is n(t) * n(t+tau)  (NO Square root for g2!)
     pop_product = n_t * n_t_plus_tau
+
+    # --- THE FIX: REGULARIZATION ---
+    # epsilon corresponds to the "noise floor" intensity.
+    # If n < epsilon, we suppress the signal.
+    # A value of 1e-4 is usually perfect for visualization.
+    epsilon_sq = 1e-3 
     
-    # Threshold to avoid division by zero in vacuum
-    # If the product of populations is effectively zero, g2 is undefined/divergent.
-    threshold = 1e-18 # Can be tighter than g1 since we deal with intensities
+    # This Soft Denominator works everywhere.
+    # - If pop_product >> 1e-9: Result is standard g2.
+    # - If pop_product << 1e-9: Result goes to 0 (because numerator is also small).
+    g2_regularized = G2_unnorm / (pop_product + epsilon_sq)
     
-    # Safe denominator
-    denom = pop_product + 1e-20
-    
-    g2_raw = G2_unnormalized / denom
-    
-    # MASKING:
-    # If population is too small, force g2 to 0.0 (or 1.0, depending on preference).
-    # 0.0 is usually better for "dark" plots in vacuum regions.
-    g2_normalized = jnp.where(pop_product < threshold, 0.0, g2_raw)
-    
-    # Note: We do NOT clip g2 to 1.0, because bunching (g2 > 1) is real physics!
-    
-    return G2_unnormalized, g2_normalized
+    return G2_unnorm, g2_regularized, pop_product
 
 def g2_matrix(
     rho_t_array,    
@@ -286,24 +257,27 @@ def g2_matrix(
     """
 
     print("Calculating G2(t, tau >= 0)...")
-    G2_matrix_list = []
-    g2_matrix_list = []
+    # Lists for the INTEGRAL calculation
+    numerator_list = []
+    denominator_list = []
+
+    # List for the HEATMAP calculation
+    g2_2d_list = []
     # Depending on memory, you might want to jax.lax.scan this, 
     # but a Python loop is safer for debugging/printing progress.
     for i in range(len(t_array)):
-        G2_row, g2_row = get_g2_row(
-            rho_t_array[i],   # rho_t
-            t_array[i],
-            a_L,            
-            adag_L,         
-            tau_array_pos,  
-            L_ops,          
-            H_t_func,       
-            E_func          
+        # Unpack the 3 values
+        raw_num, raw_denom, g2_row_plot = get_g2_row(
+            rho_t_array[i], t_array[i], a_L, adag_L, 
+            tau_array_pos, L_ops, H_t_func, E_func
         )
-        G2_matrix_list.append(G2_row)
-        g2_matrix_list.append(g2_row)
+        
+        numerator_list.append(raw_num)      # Save Numerator
+        denominator_list.append(raw_denom)  # Save Denominator
+        g2_2d_list.append(g2_row_plot)      # Save Plot version
 
-    G2_matrix = jnp.array(G2_matrix_list)
-    g2_matrix = jnp.array(g2_matrix_list)
-    return G2_matrix, g2_matrix
+    # Convert to arrays
+    Num_matrix = jnp.array(numerator_list)   # Shape (N_t, N_tau)
+    Denom_matrix = jnp.array(denominator_list) # Shape (N_t, N_tau)
+    g2_2d_matrix = jnp.array(g2_2d_list)
+    return Num_matrix, Denom_matrix, g2_2d_list
