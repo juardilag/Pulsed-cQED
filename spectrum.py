@@ -60,7 +60,6 @@ def calculate_spectrum_matrix(g1_matrix, tau_array, omega_array):
     Returns:
         jax.Array: The 2D spectrum matrix S(t, w). Shape (N_t, N_omega).
     """
-    print("Calculating spectrum matrix S(t, w)...")
     
     # We vmap the row-calculation function over the g1_matrix (axis 0)
     # in_axes=(0, None, None) means:
@@ -70,7 +69,5 @@ def calculate_spectrum_matrix(g1_matrix, tau_array, omega_array):
     S_matrix = jax.vmap(_calculate_spectrum_row, in_axes=(0, None, None))(
         g1_matrix, tau_array, omega_array
     )
-    
-    print("Spectrum calculation complete.")
     return S_matrix
 
